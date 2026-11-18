@@ -1,0 +1,119 @@
+# HudsonRide Bike Share - Data Warehouse stack
+#   postgres           PostgreSQL 16: database hudsonride_dw (DWH) dan airflow (metadata)
+#   pgadmin            antarmuka web database      -> http://localhost:5050
+#   airflow-webserver  antarmuka Airflow            -> http://localhost:8080
+#   airflow-scheduler  menjalankan DAG hudsonride_etl
+# Jalankan: docker compose up -d --build   (isi .env dulu, lihat .env.example)
+
+x-airflow-common: &airflow-common
+  build:
+    context: ./docker/airflow
+  image: hudsonride-airflow:2.10.5
+  user: "50000:0"
+  environment: &airflow-env
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:${AIRFLOW_DB_PASSWORD}@postgres:5432/airflow
+    AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
+    AIRFLOW__CORE__DEFAULT_TIMEZONE: America/New_York
+    AIRFLOW__WEBSERVER__DEFAULT_UI_TIMEZONE: Asia/Makassar
+    AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_SECRET_KEY}
+    AIRFLOW__SCHEDULER__DAG_DIR_LIST_INTERVAL: "30"
+    # koneksi pipeline ke DWH memakai akun layanan hr_etl (bukan superuser)
+    PGHOST: postgres
+    PGPORT: "5432"
+    PGUSER: hr_etl
+    PGPASSWORD: ${HR_ETL_PASSWORD}
+    HR_DB_MODE: external
+    HR_DB_NAME: hudsonride_dw
+    HR_BASE_DIR: /opt/airflow/data
+    PYTHONPATH: /opt/airflow/project
+  volumes:
+    - ./dags:/opt/airflow/dags
+    - ./etl:/opt/airflow/project/etl
+    - ./sql:/opt/airflow/project/sql
+    - ./data:/opt/airflow/data
+    - airflow-logs:/opt/airflow/logs
+  depends_on:
+    postgres:
+      condition: service_healthy
+
+services:
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: hr_admin
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: postgres
+      AIRFLOW_DB_PASSWORD: ${AIRFLOW_DB_PASSWORD}
+      HR_ETL_PASSWORD: ${HR_ETL_PASSWORD}
+      HR_ANALYST_PASSWORD: ${HR_ANALYST_PASSWORD}
+      HR_DASHBOARD_PASSWORD: ${HR_DASHBOARD_PASSWORD}
+      TZ: Asia/Makassar
+    ports:
+      - "${PG_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
+      - ./sql:/sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hr_admin -d hudsonride_dw"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  pgadmin:
+    image: dpage/pgadmin4:8
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD}
+      PGADMIN_CONFIG_SERVER_MODE: "False"
+      PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: "False"
+    ports:
+      - "5050:80"
+    volumes:
+      - pgadmin-data:/var/lib/pgadmin
+      - ./docker/pgadmin/servers.json:/pgadmin4/servers.json:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  airflow-init:
+    <<: *airflow-common
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        airflow db migrate &&
+        airflow users create --role Admin --username "$${AIRFLOW_ADMIN_USER}" --password "$${AIRFLOW_ADMIN_PASSWORD}" \
+          --firstname HudsonRide --lastname Admin --email admin@hudsonride.local || true
+    environment:
+      <<: *airflow-env
+      AIRFLOW_ADMIN_USER: ${AIRFLOW_ADMIN_USER}
+      AIRFLOW_ADMIN_PASSWORD: ${AIRFLOW_ADMIN_PASSWORD}
+    restart: "no"
+
+  airflow-webserver:
+    <<: *airflow-common
+    command: webserver
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+
+  airflow-scheduler:
+    <<: *airflow-common
+    command: scheduler
+    restart: unless-stopped
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+
+volumes:
+  pgdata:
+  pgadmin-data:
+  airflow-logs:

@@ -1,0 +1,13 @@
+{
+  "Servers": {
+    "1": {
+      "Name": "HudsonRide DWH",
+      "Group": "Servers",
+      "Host": "postgres",
+      "Port": 5432,
+      "MaintenanceDB": "hudsonride_dw",
+      "Username": "hr_admin",
+      "SSLMode": "prefer"
+    }
+  }
+}
