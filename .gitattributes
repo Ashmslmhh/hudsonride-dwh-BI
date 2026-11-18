@@ -1,0 +1,6 @@
+# Skrip shell dan SQL harus berakhiran baris LF agar berjalan di container Linux
+*.sh   text eol=lf
+*.sql  text eol=lf
+*.py   text eol=lf
+*.yml  text eol=lf
+Dockerfile text eol=lf

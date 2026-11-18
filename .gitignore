@@ -1,0 +1,18 @@
+# kredensial
+.env
+
+# data sumber dan hasil pipeline (besar; sumber dicantumkan di data/README.md)
+data/*
+!data/README.md
+
+# Python / Jupyter
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+.venv/
+
+# lain-lain
+*.log
+*.dump
+.DS_Store
+Thumbs.db

@@ -2,7 +2,7 @@
 #   postgres           PostgreSQL 16: database hudsonride_dw (DWH) dan airflow (metadata)
 #   pgadmin            antarmuka web database      -> http://localhost:5050
 #   airflow-webserver  antarmuka Airflow            -> http://localhost:8080
-#   airflow-scheduler  menjalankan DAG hudsonride_etl
+#   airflow-scheduler  menjalankan DAG hudsonride_etl (bulanan), hudsonride_weather_daily, hudsonride_holiday_yearly
 # Jalankan: docker compose up -d --build   (isi .env dulu, lihat .env.example)
 
 x-airflow-common: &airflow-common
@@ -27,7 +27,17 @@ x-airflow-common: &airflow-common
     HR_DB_MODE: external
     HR_DB_NAME: hudsonride_dw
     HR_BASE_DIR: /opt/airflow/data
-    PYTHONPATH: /opt/airflow/project
+    PYTHONPATH: /opt/airflow/project:/opt/airflow/dags
+    # notifikasi email bila ETL gagal (kosongkan HR_ALERT_EMAIL untuk menonaktifkan)
+    HR_ALERT_EMAIL: ${HR_ALERT_EMAIL:-}
+    AIRFLOW__SMTP__SMTP_HOST: ${SMTP_HOST:-smtp.gmail.com}
+    AIRFLOW__SMTP__SMTP_PORT: ${SMTP_PORT:-587}
+    AIRFLOW__SMTP__SMTP_STARTTLS: "True"
+    AIRFLOW__SMTP__SMTP_SSL: "False"
+    AIRFLOW__SMTP__SMTP_USER: ${SMTP_USER:-}
+    AIRFLOW__SMTP__SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+    AIRFLOW__SMTP__SMTP_MAIL_FROM: ${SMTP_USER:-airflow@hudsonride.com}
+    AIRFLOW__WEBSERVER__BASE_URL: http://localhost:8080
   volumes:
     - ./dags:/opt/airflow/dags
     - ./etl:/opt/airflow/project/etl
@@ -87,6 +97,7 @@ services:
       - -c
       - |
         airflow db migrate &&
+        airflow pools set hudsonride 1 "Task HudsonRide dijalankan satu per satu (raw zone dan DWH)" &&
         airflow users create --role Admin --username "$${AIRFLOW_ADMIN_USER}" --password "$${AIRFLOW_ADMIN_PASSWORD}" \
           --firstname HudsonRide --lastname Admin --email admin@hudsonride.local || true
     environment:

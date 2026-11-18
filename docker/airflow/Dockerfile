@@ -14,6 +14,9 @@ RUN apt-get update \
  && apt-get update \
  && apt-get install -y --no-install-recommends postgresql-client-16 \
  && apt-get clean && rm -rf /var/lib/apt/lists/*
+# Image Airflow sudah membawa postgresql-client 17. pg_dump 17 menulis perintah SET transaction_timeout
+# yang tidak dikenal server 16, sehingga pg_restore gagal. Utamakan klien versi 16 (= versi server).
+ENV PATH="/usr/lib/postgresql/16/bin:${PATH}"
 
 USER airflow
 ARG AIRFLOW_VERSION

@@ -10,6 +10,7 @@ Data sumber (data/) ──► raw zone ──► transform T1–T17 ──► st
                          _manifest     Python/pandas        CSV + \copy       1 transaksi     materialized view
                                                                             + rekonsiliasi
    Airflow DAG hudsonride_etl: prepare → extract → transform → load_dw → dq_checks → build_mart → backup_dw → finish
+   + hudsonride_weather_daily (harian) dan hudsonride_holiday_yearly (tahunan)
 ```
 
 ## Isi repository
@@ -19,7 +20,9 @@ Data sumber (data/) ──► raw zone ──► transform T1–T17 ──► st
 | `notebooks/ETL_HudsonRide_DWH.ipynb` | Notebook ETL untuk Google Colab (sumber logika ETL) |
 | `etl/pipeline.py` | Modul ETL yang **dihasilkan dari notebook** (`tools/make_pipeline.py`); logika identik |
 | `etl/__main__.py` | CLI: `python -m etl run`, `python -m etl run --months 2024-12`, `python -m etl dr-drill` |
-| `dags/hudsonride_etl.py` | DAG Airflow: jadwal bulanan, retry 3×, run gagal ditandai FAILED di `audit.etl_run` |
+| `dags/hudsonride_etl.py` | DAG bulanan (tanggal 8, 02.00 New York): ETL penuh, retry 3×, run gagal ditandai FAILED |
+| `dags/hudsonride_sources.py` | DAG `hudsonride_weather_daily` (harian 03.00) dan `hudsonride_holiday_yearly` (2 Januari 01.30) |
+| `dags/hudsonride_common.py` | Retry, pool `hudsonride`, notifikasi email GAGAL/PERINGATAN |
 | `sql/01_schema.sql` … `03_dq_checks.sql` | Schema stg/dw/audit, load satu transaksi, 14 pemeriksaan kualitas data |
 | `sql/04_rbac.sql` | Role `hr_admin`, `hr_etl`, `hr_analyst`, `hr_dashboard` dan hak aksesnya |
 | `sql/05_datamart.sql` | Data mart: `trip_daily`, `station_hourly`, `weather_hourly`, `route_monthly`, `kpi_monthly`, `dq_latest` |
@@ -57,7 +60,7 @@ docker compose exec airflow-scheduler python -m etl run
 docker compose exec airflow-scheduler python -m etl run --months 2024-12
 
 # DR drill: restore backup terbaru ke database uji dan ukur RTO (butuh hak DBA)
-docker compose exec -e PGUSER=hr_admin -e PGPASSWORD=<POSTGRES_PASSWORD> airflow-scheduler python -m etl dr-drill
+docker compose exec -e PGUSER=hr_admin -e PGPASSWORD=<POSTGRES_PASSWORD> airflow-scheduler python -m etl dr-drill --fresh-backup
 
 # Uji hak akses: dashboard hanya boleh membaca schema mart
 docker compose exec postgres psql -U hr_dashboard -d hudsonride_dw -c "SELECT * FROM mart.kpi_monthly LIMIT 3;"
@@ -71,6 +74,33 @@ docker compose down -v
 
 Hasil pipeline tersimpan di `data/pipeline/`: `raw/` (salinan sumber + manifest), `clean/` (staging CSV),
 `rejected/` (baris ditolak beserta aturannya), `logs/` (log per BATCH_ID), `backup/` (pg_dump, 7 terakhir).
+
+## Jadwal dan notifikasi
+
+| DAG | Jadwal (America/New_York) | Isi |
+|---|---|---|
+| `hudsonride_weather_daily` | Harian 03.00 | Periksa file cuaca NOAA, perbarui raw zone (E2) |
+| `hudsonride_holiday_yearly` | 2 Januari 01.30 | Periksa kalender hari libur, perbarui raw zone (E3) |
+| `hudsonride_etl` | Tanggal 8 setiap bulan, 02.00 | ETL penuh: extract → transform → load → DQ → data mart → backup |
+
+Semua task memakai pool `hudsonride` (1 slot) sehingga ketiga DAG tidak berjalan bersamaan. Setiap task
+di-retry 3 kali; bila tetap gagal, run ditandai FAILED di `audit.etl_run` dan **email notifikasi** dikirim
+ke `HR_ALERT_EMAIL`. Email juga dikirim bila run selesai dengan peringatan DQ.
+
+Mengaktifkan email (Gmail): aktifkan Verifikasi 2 Langkah, buat App Password di
+https://myaccount.google.com/apppasswords, lalu isi `.env`:
+
+```
+HR_ALERT_EMAIL=alamat.penerima@gmail.com
+SMTP_USER=akun.pengirim@gmail.com
+SMTP_PASSWORD=apppasswordtanpaspasi
+```
+
+Terapkan dengan `docker compose up -d`, lalu uji kirim:
+
+```powershell
+docker compose exec airflow-scheduler python -c "from hudsonride_common import send_alert; send_alert('Uji notifikasi', ['Email notifikasi HudsonRide berfungsi.'])"
+```
 
 ## Hak akses (RBAC)
 

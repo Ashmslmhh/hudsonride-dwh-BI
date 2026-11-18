@@ -276,6 +276,34 @@ def fail(message):
     logger.error(f'RUN FAILED | {message} | log: {LOG_FILE}')
 
 
+def _ensure_schema():
+    t = query("SELECT coalesce(to_regclass('audit.etl_run')::text, '') AS t").iloc[0, 0]
+    if not isinstance(t, str) or not t:
+        psql(file=SQL_PATHS['01_schema.sql'])
+
+
+def refresh_source(source):
+    """Jadwal terpisah per sumber (rancangan awal): cuaca harian, hari libur tahunan.
+    Memeriksa file sumber dan memperbarui raw zone; DAG bulanan memakai raw zone terbaru ini."""
+    steps = {'weather': ('E2 extract cuaca NOAA', extract_weather),
+             'holiday': ('E3 extract hari libur', extract_holiday)}
+    name, fn = steps[source]
+    _ensure_schema()
+    audit_run_start(f'refresh_{source}', 'all')
+    try:
+        with step(name) as s:
+            raw, files = fn()
+            s['rows_out'] = len(raw)
+            s['message'] = ', '.join(Path(f).name for f in files)
+        audit_run_end('SUCCESS', len(raw), None, None, f'raw zone {source} diperbarui')
+        logger.info(f'REFRESH {source} SUCCESS | {len(raw):,} baris')
+        return len(raw)
+    except Exception as e:
+        audit_run_end('FAILED', None, None, None, f'{type(e).__name__}: {e}'[:4000])
+        logger.error(f'REFRESH {source} FAILED | {type(e).__name__}: {e}')
+        raise
+
+
 def run_all(run_months=None, batch_id=None):
     """Seluruh tahap dalam satu proses (setara run_pipeline() di notebook)."""
     init(batch_id, run_months)
